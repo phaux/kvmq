@@ -18,12 +18,12 @@ Deno.test("queue", async () => {
   const queue = new Queue<string>(db, "test");
   await queue.deleteWaitingJobs();
 
-  await queue.push("a");
-  await queue.push("b", { priority: 1 });
-  await queue.push("error", { retryCount: 1 });
-  await queue.push("c", { repeatCount: 1 });
-  await queue.push("error");
-  await queue.push("d");
+  await queue.pushJob("a");
+  await queue.pushJob("b", { priority: 1 });
+  await queue.pushJob("error", { retryCount: 1 });
+  await queue.pushJob("c", { repeatCount: 1 });
+  await queue.pushJob("error");
+  await queue.pushJob("d");
 
   const jobs = await queue.getAllJobs();
 
@@ -32,13 +32,13 @@ Deno.test("queue", async () => {
   const results: string[] = [];
   const errors: string[] = [];
 
-  const worker = queue.createWorker(async (input) => {
-    console.log("processing", input);
+  const worker = queue.createWorker(async ({ state }) => {
+    console.log("processing", state);
     await delay(1000);
-    if (input === "error") {
+    if (state === "error") {
       throw new Error("error");
     }
-    results.push(input);
+    results.push(state);
   });
 
   worker.addEventListener("error", (e) => {
@@ -46,7 +46,7 @@ Deno.test("queue", async () => {
   });
 
   const controller = new AbortController();
-  worker.process(controller.signal);
+  worker.processJobs({ signal: controller.signal });
 
   await delay(500);
   // initial state
@@ -88,9 +88,9 @@ Deno.test("queue", async () => {
   assertEquals(results, ["b", "a", "c", "d", "c"]);
   assertEquals(errors, ["error", "error", "error"]);
   // now waiting 3 seconds before polling again
-  await queue.push("error", { retryCount: 1, retryDelayMs: 500 });
-  await queue.push("e");
-  await queue.push("f");
+  await queue.pushJob("error", { retryCount: 1, retryDelayMs: 500 });
+  await queue.pushJob("e");
+  await queue.pushJob("f");
   await delay(3000);
   // error
   assertEquals(results, ["b", "a", "c", "d", "c"]);
@@ -110,7 +110,7 @@ Deno.test("queue", async () => {
   assertEquals(errors, ["error", "error", "error", "error", "error"]);
   await delay(1000);
   const controller2 = new AbortController();
-  const processPromise = worker.process(controller2.signal);
+  const processPromise = worker.processJobs({ signal: controller2.signal });
   await delay(500);
   // initial after resume
   assertEquals(results, ["b", "a", "c", "d", "c", "e"]);
