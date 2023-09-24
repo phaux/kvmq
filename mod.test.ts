@@ -32,13 +32,13 @@ Deno.test("queue", async () => {
   const results: string[] = [];
   const errors: string[] = [];
 
-  const worker = queue.createWorker(async ({ state }) => {
-    console.log("processing", state);
+  const worker = queue.createWorker(async (job) => {
+    console.log("processing", job.state);
     await delay(1000);
-    if (state === "error") {
+    if (job.state === "error") {
       throw new Error("error");
     }
-    results.push(state);
+    results.push(job.state);
   });
 
   worker.addEventListener("error", (e) => {

@@ -21,9 +21,9 @@ await queue.pushJob({ name: "Bob" }, { priority: 1 });
 await queue.pushJob({ name: "Kazik" }, { retryCount: 1 });
 await queue.pushJob({ name: "Zenek" }, { repeatCount: 1 });
 
-const worker = queue.createWorker(async ({ state }) => {
+const worker = queue.createWorker(async (job) => {
   await new Promise((resolve) => setTimeout(resolve, 1000));
-  console.log(`Hello ${state.name}!`);
+  console.log(`Hello ${job.state.name}!`);
 });
 
 worker.addEventListener("error", (ev) => {

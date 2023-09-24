@@ -135,7 +135,7 @@ export class Queue<State> {
    */
   async pushJob(state: State, options: JobOptions = {}): Promise<Job<State>> {
     const {
-      priority = 0,
+      priority = -0,
       delayUntil = new Date(),
       repeatCount = 0,
       repeatDelayMs = 0,
@@ -255,7 +255,7 @@ export class Queue<State> {
    * Shorthand for constructing a {@link Worker} for this queue.
    */
   createWorker(
-    handler: (params: HandlerParams<State>) => Promise<void>,
+    handler: JobHandler<State>,
     options?: WorkerOptions,
   ): Worker<State> {
     return new Worker(this.db, this.key, handler, options);
@@ -320,23 +320,22 @@ export interface WorkerEventMap<State> {
 }
 
 /**
- * Parameters received by worker's handler function.
+ * Function that processes a job.
+ *
+ * Receives the job data and a function for updating the job data in the database if necessary.
+ */
+export type JobHandler<State> = (
+  job: Job<State>,
+  updateJob: (job: Partial<JobData<State>>) => Promise<void>,
+  params: JobHandlerParams,
+) => Promise<void>;
+
+/**
+ * Extra parameters received by worker's handler function.
  *
  * @template State Type of custom state data that is passed to the handler.
  */
-export interface HandlerParams<State> {
-  /**
-   * The current state of the job.
-   */
-  state: State;
-
-  /**
-   * Sets the state of the current job.
-   *
-   * This can reject if updating value in the database fails.
-   */
-  setState: (state: State) => Promise<void>;
-
+export interface JobHandlerParams {
   /**
    * Stops processing any more jobs.
    *
@@ -366,7 +365,7 @@ export class Worker<State> extends EventTarget {
   /**
    * The function that processes the jobs.
    */
-  handler: (params: HandlerParams<State>) => Promise<void>;
+  handler: JobHandler<State>;
 
   /**
    * Worker options.
@@ -404,7 +403,7 @@ export class Worker<State> extends EventTarget {
   constructor(
     db: Deno.Kv,
     key: Deno.KvKeyPart,
-    handler: (params: HandlerParams<State>) => Promise<void>,
+    handler: JobHandler<State>,
     options: WorkerOptions = {},
   ) {
     super();
@@ -561,9 +560,12 @@ export class Worker<State> extends EventTarget {
       logger().info(`Job ${jobEntry.key.join("/")}: Started`);
 
       // process the job
-      await this.handler({
-        state: jobEntry.value.state,
-        setState: async (state) => {
+      await this.handler(
+        {
+          ...jobEntry.value,
+          id: [Number(jobEntry.key[2]), String(jobEntry.key[3])],
+        },
+        async (job) => {
           // save new state to database and update lock
           await retry(async () => {
             const currentJobEntry = await this.db.get<JobData<State>>(
@@ -577,9 +579,20 @@ export class Worker<State> extends EventTarget {
               .set(
                 jobEntry.key,
                 {
-                  ...currentJobEntry.value,
-                  state,
-                  lockUntil: new Date(Date.now() + this.options.lockDurationMs),
+                  state: job.state ??
+                    currentJobEntry.value.state,
+                  delayUntil: job.delayUntil ??
+                    currentJobEntry.value.delayUntil,
+                  lockUntil: job.lockUntil ??
+                    new Date(Date.now() + this.options.lockDurationMs),
+                  repeatCount: job.repeatCount ??
+                    currentJobEntry.value.repeatCount,
+                  repeatDelayMs: job.repeatDelayMs ??
+                    currentJobEntry.value.repeatDelayMs,
+                  retryCount: job.retryCount ??
+                    currentJobEntry.value.retryCount,
+                  retryDelayMs: job.retryDelayMs ??
+                    currentJobEntry.value.retryDelayMs,
                 } satisfies JobData<State>,
               ).commit();
             if (!setStateResult.ok) {
@@ -587,10 +600,12 @@ export class Worker<State> extends EventTarget {
             }
           });
         },
-        stopProcessing: () => {
-          this.stopProcessing();
+        {
+          stopProcessing: () => {
+            this.stopProcessing();
+          },
         },
-      });
+      );
 
       // processing job finished
       logger().info(`Job ${jobEntry.key.join("/")}: Completed`);
