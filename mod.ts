@@ -58,7 +58,7 @@ export interface JobData<State> {
   repeatDelayMs: number;
 
   /**
-   * Number of times to attempt this job if it fails.
+   * Number of extra times to attempt this job if it fails.
    *
    * If a worker fails to process this job, it checks this value.
    * If it's greater than 0, it's decremented and the job is returned to the queue.
@@ -77,9 +77,9 @@ export interface JobData<State> {
 /**
  * Data and metadata about a job.
  *
- * @template Input Type of custom state data that is passed to the worker when processing this job.
+ * @template State Type of custom state data that is passed to the worker when processing this job.
  */
-export interface Job<Input> extends JobData<Input> {
+export interface Job<State> extends JobData<State> {
   id: JobId;
 }
 
@@ -255,7 +255,7 @@ export class Queue<State> {
    * Shorthand for constructing a {@link Worker} for this queue.
    */
   createWorker(
-    handler: (value: HandlerParams<State>) => Promise<void>,
+    handler: (params: HandlerParams<State>) => Promise<void>,
     options?: WorkerOptions,
   ): Worker<State> {
     return new Worker(this.db, this.key, handler, options);
@@ -300,15 +300,15 @@ export interface WorkerOptions {
 /**
  * Map of events emitted by a {@link Worker}.
  *
- * @template Input Type of custom state data that is passed to the worker when processing a job.
+ * @template State Type of custom state data that is passed to the worker when processing a job.
  */
-export interface WorkerEventMap<Input> {
+export interface WorkerEventMap<State> {
   /**
    * Emitted every time when processing a job fails.
    *
    * The job will be processed again if it has more attempts left.
    */
-  error: CustomEvent<{ error: Error; job: Job<Input> }>;
+  error: CustomEvent<{ error: Error; job: Job<State> }>;
 
   /**
    * Emitted every time when a job is completed.
@@ -316,7 +316,7 @@ export interface WorkerEventMap<Input> {
    * The job is already deleted from the queue when this event is emitted.
    * It will be added again if it has more repeats left.
    */
-  complete: CustomEvent<{ job: Job<Input> }>;
+  complete: CustomEvent<{ job: Job<State> }>;
 }
 
 /**
@@ -429,7 +429,8 @@ export class Worker<State> extends EventTarget {
    * Aborting won't wait for the already started jobs to finish processing.
    * To also wait for all currently running jobs, use `await Promise.all(worker.activeJobs)`.
    *
-   * Returns a promise that resolves when the processing finishes.
+   * Returns a promise that resolves when the job popping loop exits.
+   * The only ways to exit this loop is to use the signal argument or {@link stopProcessing}.
    * It can reject when getting or updating jobs in the database fails.
    * Whenever an error occurs in the processing handler, the worker will emit an `error` event.
    */
