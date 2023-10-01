@@ -80,7 +80,38 @@ export interface JobData<State> {
  * @template State Type of custom state data that is passed to the worker when processing this job.
  */
 export interface Job<State> extends JobData<State> {
+  /**
+   * Unique ID of this job.
+   */
   id: JobId;
+}
+
+/**
+ * Data and metadata about a job, with additional computed properties.
+ *
+ * Used as a result of listing jobs in a queue.
+ *
+ * @template State Type of custom state data that is passed to the worker when processing this job.
+ */
+export interface JobEntry<State> extends Job<State> {
+  /**
+   * Position of this job in the queue.
+   *
+   * 0 means that the job is currently being processed by a worker.
+   * Numbers 1 and above mean that the job is waiting to be processed.
+   */
+  place: number;
+
+  /**
+   * Current state of this job.
+   *
+   * Computed based on {@link JobData.lockUntil} and {@link JobData.delayUntil}.
+   *
+   * - `waiting` - the job is waiting to be processed
+   * - `processing` - the job is locked, which means it's being processed by a worker.
+   * - `delayed` - the job is waiting for it's {@link JobData.delayUntil} to expire.
+   */
+  status: "waiting" | "processing" | "delayed";
 }
 
 /**
@@ -181,16 +212,10 @@ export class Queue<State> {
    * Returns an array of all jobs in this queue, from front to back.
    *
    * The jobs are sorted by priority first, then by creation date, ascending.
-   *
-   * Job objects don't include a `state` enum.
-   * You can compute a state of a job using the following rules:
-   *
-   * - If {@link Job.lockUntil} is in the future, the job is being processed by a worker.
-   * - If {@link Job.delayUntil} in in the future, the job can't be picked up for processing because it has a delay set.
-   * - Otherwise the job is waiting to be processed.
    */
-  async getAllJobs(): Promise<Array<Job<State>>> {
-    const results: Array<Job<State>> = [];
+  async getAllJobs(): Promise<Array<JobEntry<State>>> {
+    const results: Array<JobEntry<State>> = [];
+    let index = 0;
     for await (
       const job of this.db.list<JobData<State>>({
         prefix: [this.key, JOBS_KEY],
@@ -198,7 +223,26 @@ export class Queue<State> {
     ) {
       const [_key, _fieldKey, priority, id] = job.key;
       if (typeof priority !== "number" || typeof id !== "string") continue;
-      results.push({ id: [priority, id], ...job.value });
+      let place: number;
+      let status: JobEntry<State>["status"];
+      if (job.value.lockUntil > new Date()) {
+        place = 0;
+        status = "processing";
+      } else if (job.value.delayUntil > new Date()) {
+        index++;
+        place = index;
+        status = "delayed";
+      } else {
+        index++;
+        place = index;
+        status = "waiting";
+      }
+      results.push({
+        id: [priority, id],
+        ...job.value,
+        place,
+        status,
+      });
     }
     return results;
   }
@@ -232,7 +276,7 @@ export class Queue<State> {
    * Note: currently it just polls the queue every few seconds.
    */
   async listenUpdates(
-    onUpdate: (jobs: Array<Job<State>>) => void,
+    onUpdate: (jobs: Array<JobEntry<State>>) => void,
     options: { signal?: AbortSignal; pollIntervalMs?: number },
   ): Promise<void> {
     const { signal, pollIntervalMs = 3000 } = options;

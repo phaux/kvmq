@@ -1,7 +1,8 @@
+import { assertEquals } from "https://deno.land/std@0.203.0/assert/assert_equals.ts";
+import { assertObjectMatch } from "https://deno.land/std@0.203.0/assert/assert_object_match.ts";
+import { delay } from "https://deno.land/std@0.201.0/async/delay.ts";
 import { handlers, setup } from "https://deno.land/std@0.201.0/log/mod.ts";
 import { Queue } from "./mod.ts";
-import { assertEquals } from "https://deno.land/std@0.135.0/testing/asserts.ts";
-import { delay } from "https://deno.land/std@0.201.0/async/delay.ts";
 
 setup({
   handlers: {
@@ -28,6 +29,10 @@ Deno.test("queue", async () => {
   const jobs = await queue.getAllJobs();
 
   assertEquals(jobs.length, 6);
+
+  assertObjectMatch(jobs[0], { state: "b", place: 1, status: "waiting" });
+  assertObjectMatch(jobs[1], { state: "a", place: 2, status: "waiting" });
+  assertObjectMatch(jobs[2], { state: "error", place: 3, status: "waiting" });
 
   const results: string[] = [];
   const errors: string[] = [];
@@ -115,6 +120,9 @@ Deno.test("queue", async () => {
   // initial after resume
   assertEquals(results, ["b", "a", "c", "d", "c", "e"]);
   assertEquals(errors, ["error", "error", "error", "error", "error"]);
+  const jobs2 = await queue.getAllJobs();
+  assertEquals(jobs2.length, 1);
+  assertObjectMatch(jobs2[0], { state: "f", place: 0, status: "processing" });
   await delay(1000);
   // f
   assertEquals(results, ["b", "a", "c", "d", "c", "e", "f"]);
